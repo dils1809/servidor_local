@@ -1,0 +1,58 @@
+"""Entry point: ``python -m src``.
+
+Wires the three layers together and hands control to the read/dispatch loop.
+Swapping stdio for another transport later is a one-line change here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+
+from .mcp_server import MCPServer, serve
+from .transport import StdioTransport, configure_logging
+
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def build_server() -> MCPServer:
+    """Create the server and register every feature it exposes.
+
+    Features are registered here, in the composition root, so the protocol
+    layer stays free of business logic. Tools, resources and prompts are added
+    in later milestones.
+    """
+    return MCPServer()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m src",
+        description="VIBBO MCP server (stdio transport). Reads JSON-RPC 2.0 "
+        "messages from stdin, one per line, and writes responses to stdout.",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=LOG_LEVELS,
+        help="Verbosity of the diagnostic log, which is always written to "
+        "stderr so stdout stays protocol-only (default: %(default)s).",
+    )
+    args = parser.parse_args(argv)
+
+    configure_logging(level=getattr(logging, args.log_level))
+
+    transport = StdioTransport()
+    server = build_server()
+    try:
+        serve(transport, server)
+    except KeyboardInterrupt:
+        logging.getLogger(__name__).info("interrupted, shutting down")
+    finally:
+        transport.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
