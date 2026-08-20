@@ -1,0 +1,9 @@
+# This project intentionally has no third-party dependencies.
+#
+# The MCP protocol and the JSON-RPC 2.0 layer are implemented by hand, as
+# required by the course assignment: no official MCP SDK, no FastMCP, no
+# protocol libraries. Everything below is part of the Python 3.11+ standard
+# library and therefore needs no installation:
+#
+#   json, sqlite3, sys, os, pathlib, dataclasses, typing, enum, logging,
+#   datetime, random, argparse, unittest
