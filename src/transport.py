@@ -1,18 +1,13 @@
-"""Message framing and I/O for the MCP server.
+"""Message framing and I/O.
 
-The transport is the only layer that knows *how* bytes travel. It moves opaque
-lines of text and never inspects their contents: parsing belongs to
-``jsonrpc.py`` and meaning belongs to ``mcp_server.py``. That separation is
-what lets the same server be exposed over HTTP later by writing a second
-``Transport`` implementation and changing nothing else.
+Moves lines of text without looking inside them. Parsing lives in jsonrpc.py,
+meaning lives in mcp_server.py. An HTTP transport later is just another
+subclass of Transport.
 
-Framing is newline-delimited JSON (NDJSON), as required by the MCP stdio
-transport: one message per line, and no raw newline may appear inside a
-message. ``jsonrpc.encode`` guarantees the second half of that contract.
+Framing is NDJSON: one message per line, no raw newline inside a message.
 
-One rule governs this whole module: **stdout carries protocol traffic and
-nothing else.** A stray ``print`` corrupts the stream and the client drops the
-connection. Diagnostics go to stderr, which is why ``configure_logging`` exists.
+One rule: stdout carries protocol traffic only. A stray print() corrupts the
+stream and the client drops the connection. Logs go to stderr.
 """
 
 from __future__ import annotations
@@ -26,31 +21,26 @@ logger = logging.getLogger(__name__)
 
 
 class Transport(ABC):
-    """A bidirectional channel that carries one text message at a time."""
+    """A channel that carries one text message at a time."""
 
     @abstractmethod
     def read_message(self) -> str | None:
-        """Block until the next message arrives.
-
-        Returns the raw text of the message, or ``None`` when the peer closed
-        the channel and no more messages will arrive.
-        """
+        """Wait for the next message. Returns None when the peer disconnects."""
 
     @abstractmethod
     def write_message(self, text: str) -> None:
         """Send one already-serialized message."""
 
     def close(self) -> None:
-        """Release any resources. Safe to call more than once."""
+        """Release resources. Safe to call twice."""
 
 
 class StdioTransport(Transport):
-    """NDJSON over stdin/stdout, the transport MCP clients launch locally.
+    """NDJSON over stdin/stdout.
 
-    Streams can be injected for testing; by default the process streams are
-    reconfigured to UTF-8 first. That reconfiguration is not optional on
-    Windows, where the console defaults to a legacy code page (cp1252) and
-    would mangle any non-ASCII product name on the way out.
+    Streams can be injected for testing. By default the process streams are
+    reconfigured to UTF-8 first, which matters on Windows: the console starts
+    in cp1252 and would mangle any non-ASCII product name.
     """
 
     def __init__(
@@ -64,19 +54,19 @@ class StdioTransport(Transport):
         while True:
             line = self._stdin.readline()
             if line == "":
-                # Empty string (as opposed to "\n") means end of file.
+                # "" is end of file. "\n" would be an empty line.
                 logger.debug("stdin closed by the client")
                 return None
-            line = line.strip()
+            # Strip a BOM too: some clients concatenate files that carry one.
+            line = line.strip().lstrip("﻿").strip()
             if not line:
-                # Blank separator lines are tolerated and skipped.
                 continue
             logger.debug("<-- %s", line)
             return line
 
     def write_message(self, text: str) -> None:
         if "\n" in text or "\r" in text:
-            # Would break framing: the client would read two truncated halves.
+            # This would break framing: the client would read two half messages.
             raise ValueError("A framed message must not contain newline characters")
         if self._closed:
             raise RuntimeError("Transport is closed")
@@ -91,32 +81,31 @@ class StdioTransport(Transport):
         try:
             self._stdout.flush()
         except ValueError:
-            # Stream already torn down by the interpreter; nothing to flush.
+            # Stream already torn down by the interpreter.
             pass
 
 
 def _prepare_stdin(stream: TextIO) -> TextIO:
-    """Force UTF-8 on the input stream, keeping universal-newline decoding."""
     reconfigure = getattr(stream, "reconfigure", None)
     if reconfigure is not None:
-        # newline is left at its default so that a client sending CRLF still
-        # yields clean lines.
-        reconfigure(encoding="utf-8", errors="replace")
+        # utf-8-sig reads plain UTF-8 the same way but also drops a leading
+        # BOM. PowerShell adds one when piping a file into the server.
+        # newline is left at its default so CRLF input still gives clean lines.
+        reconfigure(encoding="utf-8-sig", errors="replace")
     return stream
 
 
 def _prepare_stdout(stream: TextIO) -> TextIO:
-    """Force UTF-8 and LF-only line endings on the output stream."""
     reconfigure = getattr(stream, "reconfigure", None)
     if reconfigure is not None:
-        # newline="\n" disables the Windows LF -> CRLF translation, so every
-        # framed message ends with exactly one byte of delimiter.
+        # newline="\n" turns off the Windows LF -> CRLF translation, so each
+        # message ends with exactly one delimiter byte.
         reconfigure(encoding="utf-8", errors="strict", newline="\n")
     return stream
 
 
 def configure_logging(level: int = logging.INFO, stream: TextIO | None = None) -> None:
-    """Send all diagnostics to stderr so stdout stays protocol-only."""
+    """Send diagnostics to stderr so stdout stays protocol only."""
     logging.basicConfig(
         level=level,
         stream=stream if stream is not None else sys.stderr,
