@@ -189,7 +189,7 @@ def search_products(
         product_id = product.pop("id")
         variants = conn.execute(
             """
-            SELECT title, inventory_quantity
+            SELECT title, sku, inventory_quantity
             FROM variants
             WHERE product_id = ?
             ORDER BY id
@@ -199,6 +199,7 @@ def search_products(
         product["variants"] = [
             {
                 "title": variant["title"],
+                "sku": variant["sku"],
                 "inventory_quantity": variant["inventory_quantity"],
                 "in_stock": variant["inventory_quantity"] > 0,
             }

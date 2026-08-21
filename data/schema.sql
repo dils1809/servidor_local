@@ -44,7 +44,10 @@ CREATE TABLE products (
 CREATE TABLE variants (
     id                 INTEGER PRIMARY KEY,
     product_id         INTEGER NOT NULL REFERENCES products (id) ON DELETE CASCADE,
+    -- Shopify names the implicit variant of an option-less product
+    -- 'Default Title'. Every VIBBO product is sold that way today.
     title              TEXT NOT NULL,
+    sku                TEXT,
     inventory_quantity INTEGER NOT NULL CHECK (inventory_quantity >= 0)
 );
 

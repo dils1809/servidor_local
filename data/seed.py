@@ -1,17 +1,27 @@
-"""Populate the VIBBO database with synthetic data.
+"""Populate the VIBBO database with synthetic support data.
 
 Run it from the repository root::
 
     python data/seed.py
 
-The script is deterministic: a fixed random seed and a fixed reference date
-mean every run produces byte-identical data, on any machine. That matters for a
-demo, where the order numbers quoted in the README have to be the ones actually
-in the database. Pass ``--reference-date`` to shift every timestamp to a
-different anchor day.
+What is real and what is not
+----------------------------
+The **catalog** mirrors the public VIBBO storefront (drinkvibbo.com), which
+runs on Shopify: product titles, prices in USD, descriptions, SKUs, the
+``Default Title`` variant name and the sold-out flags all come from the store's
+public ``/products.json`` feed. Keeping them accurate is what lets the support
+chatbot answer real questions about real products.
 
-Every customer, order and product below is fabricated. There is no connection
-to any real store, and no real personal data is involved.
+Everything that identifies a person or a transaction is **invented**: the eight
+customers, their email addresses, the twenty-five orders, tracking numbers and
+support tickets do not exist and never did. The exact on-hand unit counts are
+invented too, because Shopify's public feed exposes only ``available:
+true/false``; the sold-out products are seeded at zero to match it.
+
+The script is deterministic: a fixed random seed and a fixed reference date
+mean every run produces byte-identical data on any machine, so the order
+numbers quoted in the README are always the ones in the database. Pass
+``--reference-date`` to anchor the timeline on a different day.
 """
 
 from __future__ import annotations
@@ -30,18 +40,105 @@ DEFAULT_DB_PATH = HERE / "vibbo.db"
 RANDOM_SEED = 20260820
 DEFAULT_REFERENCE_DATE = date(2026, 8, 20)
 
-# Guatemala City, where the fictional shop operates.
 TIMEZONE_OFFSET = "-06:00"
-CURRENCY = "GTQ"
+CURRENCY = "USD"
 
-FREE_SHIPPING_THRESHOLD = 300.00
-SHIPPING_COST = 25.00
+# Carriers named in the published shipping policy. USPS is domestic only.
+CARRIERS = ("UPS", "FedEx", "USPS")
 
-CARRIERS = ("Guatex", "Cargo Expreso", "Forza Delivery", "DHL Express")
+# Published service levels, in days.
+PROCESSING_DAYS = (1, 5)   # "processed and prepared for shipment within 1-5 business days"
+DELIVERY_DAYS = (3, 7)     # "domestic orders arrive within 3-7 business days"
+
+# Shopify's name for the single variant of a product that has no options.
+DEFAULT_VARIANT_TITLE = "Default Title"
 
 
 # ---------------------------------------------------------------------------
-# Fixed reference data
+# Catalog -- taken from the public storefront
+# ---------------------------------------------------------------------------
+# (title, product_type, price, description, sku, on_hand)
+#
+# product_type is empty in the Shopify feed, so it is filled in here to give
+# search_products something meaningful to match on. on_hand is synthetic: zero
+# where the storefront reports the product sold out, an invented positive count
+# otherwise.
+PRODUCTS = [
+    (
+        "Energy & Hydration Functional Tea",
+        "Functional tea",
+        25.00,
+        "This vibrant mix of cocoa husk, dried black lemon, and creamy coconut "
+        "brings you a smooth lift, crafted for clarity, not chaos. "
+        "Ingredients: Black tea, hibiscus, cocoa husk, pineapple pieces, "
+        "coconut, raisins, dried black lemon.",
+        "VBB-HIDRA-001",
+        128,
+    ),
+    (
+        "Detox Functional Tea",
+        "Functional tea",
+        25.00,
+        "This crisp blend crafted with citrus and fragrant herbs gently renews "
+        "from the inside out. Sip daily to boost your rhythm, clear the path, "
+        "and unleash your inner power. "
+        "Ingredients: Fennel, mint, ginger, coriander seeds, boldo, pineapple "
+        "pieces.",
+        "VBB-GUT-001",
+        94,
+    ),
+    (
+        "Calm Functional Tea",
+        "Functional tea",
+        25.00,
+        "Packed with refreshing botanicals, this blend channels the Mayan "
+        "secret to keeping your cool even on rush hours. Sip, sigh, and let "
+        "peace sneak up on you. "
+        "Ingredients: Rosemary, lavender, passionflower, lemon verbena, orange "
+        "peel, ginger, cinnamon.",
+        "VBB-CHILL-001",
+        61,
+    ),
+    (
+        "All Day Bundle Pack",
+        "Bundle",
+        60.00,
+        "Your complete daily ritual. Rise with Energy, a vibrant black tea "
+        "blend with cocoa husk, coconut, dried black lemon, hibiscus, "
+        "pineapple, and raisins. Reset with Detox, an earthy, refreshing blend "
+        "of fennel, mint, ginger, coriander, boldo, and pineapple. Rest with "
+        "Calm, a botanical blend of rosemary, lavender, passionflower and "
+        "lemon verbena.",
+        None,
+        37,
+    ),
+    (
+        "Reset Bundle Assortment Box",
+        "Bundle",
+        41.00,
+        "Assortment box with the three 30 gr. blends. "
+        "Hydra Boost Natural Energy (30 gr.): Black tea, hibiscus, cocoa husk, "
+        "pineapple pieces, coconut, elderberry, dried black lemon. "
+        "Gut Bliss Natural Detox (30 gr.): Fennel, mint, ginger, coriander "
+        "seeds, boldo, pineapple pieces. "
+        "Chill Vibes Natural Relax (30 gr.): Rosemary, lavender, "
+        "passionflower, lemon verbena, orange peel, ginger, cinnamon.",
+        "VBB-BOX-001",
+        0,  # sold out on the storefront
+    ),
+    (
+        "Filter Bags",
+        "Accessory",
+        9.99,
+        "Filter bag box with 100 biodegradable wood pulp sachets inside.",
+        None,
+        0,  # sold out on the storefront
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# Invented people
 # ---------------------------------------------------------------------------
 CUSTOMERS = [
     ("ana.morales@example.com", "Ana", "Morales"),
@@ -54,119 +151,7 @@ CUSTOMERS = [
     ("renata.chavez@example.com", "Renata", "Chávez"),
 ]
 
-# (title, product_type, price, description, [(variant_title, inventory), ...])
-PRODUCTS = [
-    (
-        "Sencha Verde Clásico",
-        "Té verde",
-        68.00,
-        "Sencha japonés de primera cosecha, sabor herbáceo y fresco con final dulce.",
-        [("50 g", 42), ("100 g", 18), ("250 g", 6)],
-    ),
-    (
-        "Matcha Ceremonial Uji",
-        "Té verde",
-        245.00,
-        "Matcha ceremonial molido en piedra, procedente de Uji. Textura sedosa y umami intenso.",
-        [("30 g", 12), ("60 g", 0)],
-    ),
-    (
-        "Earl Grey Bergamota",
-        "Té negro",
-        72.00,
-        "Base de Ceylan con aceite natural de bergamota de Calabria. Nuestro más vendido.",
-        [("50 g", 60), ("100 g", 34), ("250 g", 11), ("Bolsitas (20)", 25)],
-    ),
-    (
-        "English Breakfast Reserva",
-        "Té negro",
-        65.00,
-        "Mezcla robusta de Assam y Ceylan, pensada para tomar con leche.",
-        [("100 g", 28), ("250 g", 9), ("Bolsitas (20)", 40)],
-    ),
-    (
-        "Darjeeling Primera Cosecha",
-        "Té negro",
-        130.00,
-        "Darjeeling first flush, ligero y floral, con el característico toque moscatel.",
-        [("50 g", 15), ("100 g", 4)],
-    ),
-    (
-        "Oolong Leche Taiwanés",
-        "Té oolong",
-        155.00,
-        "Oolong de altura con notas cremosas naturales. Admite varias infusiones.",
-        [("50 g", 20), ("100 g", 7)],
-    ),
-    (
-        "Té Blanco Aguja de Plata",
-        "Té blanco",
-        198.00,
-        "Bai Hao Yin Zhen, solo brotes. Delicado, dulce y muy poco astringente.",
-        [("30 g", 9), ("50 g", 3)],
-    ),
-    (
-        "Pu-erh Añejo 2015",
-        "Té pu-erh",
-        175.00,
-        "Pu-erh fermentado y prensado en 2015. Cuerpo terroso y profundo.",
-        [("100 g", 14), ("Torta 357 g", 2)],
-    ),
-    (
-        "Rooibos Vainilla",
-        "Infusión",
-        58.00,
-        "Rooibos sudafricano con vaina de vainilla. Sin cafeína, apto para la noche.",
-        [("100 g", 45), ("250 g", 16), ("Bolsitas (20)", 30)],
-    ),
-    (
-        "Manzanilla Dorada",
-        "Infusión",
-        45.00,
-        "Flores enteras de manzanilla egipcia. Suave y ligeramente amielada.",
-        [("50 g", 52), ("100 g", 24), ("Bolsitas (20)", 38)],
-    ),
-    (
-        "Menta Marroquí",
-        "Infusión",
-        48.00,
-        "Hierbabuena secada al sol, tradicional para preparar té a la menta.",
-        [("50 g", 33), ("100 g", 19)],
-    ),
-    (
-        "Chai Masala Especiado",
-        "Mezcla",
-        85.00,
-        "Assam con cardamomo, canela, jengibre y clavo. Se prepara hervido con leche.",
-        [("100 g", 26), ("250 g", 8), ("Bolsitas (20)", 22)],
-    ),
-    (
-        "Jazmín Perlas de Dragón",
-        "Té verde",
-        142.00,
-        "Hojas enrolladas a mano y perfumadas con flor de jazmín en cinco pasadas.",
-        [("50 g", 17), ("100 g", 5)],
-    ),
-    (
-        "Frutos Rojos del Bosque",
-        "Infusión",
-        62.00,
-        "Hibisco, escaramujo, arándano y fresa. Se toma frío o caliente.",
-        [("100 g", 41), ("250 g", 13), ("Bolsitas (20)", 27)],
-    ),
-    (
-        "Jengibre y Cúrcuma",
-        "Infusión",
-        55.00,
-        "Raíz de jengibre y cúrcuma con un toque de pimienta negra y limón.",
-        [("100 g", 36), ("250 g", 10)],
-    ),
-]
-
-# Order shapes, in the order they are created. Each entry is
-# (financial_status, fulfillment_status, shipment_status or None).
-# Roughly a third already delivered, a third in transit, a third not yet sent,
-# plus a few edge cases the support chatbot has to handle gracefully.
+# (financial_status, fulfillment_status, shipment_status or None)
 ORDER_SHAPES = [
     ("paid", "fulfilled", "delivered"),
     ("paid", "fulfilled", "delivered"),
@@ -195,26 +180,28 @@ ORDER_SHAPES = [
     ("refunded", "restocked", None),
 ]
 
-# Pre-existing tickets, so the table is not empty before the tool writes to it.
 SEED_TICKETS = [
     (
         "ana.morales@example.com",
-        "El matcha llegó con el empaque abierto",
-        "Recibí el pedido #1003 y la bolsa de matcha venía sin sello. Adjunto fotos.",
+        "Box arrived crushed",
+        "Order #1003 arrived with the outer box crushed. The pouches look "
+        "fine but I wanted to report it.",
         "resolved",
         14,
     ),
     (
         "mfuentes@example.com",
-        "Quiero cambiar la variante de mi pedido",
-        "Pedí Earl Grey de 50 g pero necesito el de 250 g. El pedido aún no ha salido.",
+        "When is the Reset Bundle back in stock?",
+        "The Reset Bundle Assortment Box shows sold out. Can you let me know "
+        "when it is available again?",
         "closed",
         9,
     ),
     (
         "sofia.arriaga@example.com",
-        "No me llegó el correo de confirmación",
-        "Hice una compra ayer y no recibí ningún correo, aunque sí me apareció el cargo.",
+        "No confirmation email received",
+        "I placed an order yesterday and never got a confirmation email, "
+        "although the charge did go through.",
         "open",
         2,
     ),
@@ -226,12 +213,52 @@ SEED_TICKETS = [
 # ---------------------------------------------------------------------------
 def timestamp(day: date, hour: int, minute: int) -> str:
     """Render an RFC 3339 timestamp, the format the Shopify API uses."""
-    moment = datetime(day.year, day.month, day.day, hour, minute)
-    return moment.strftime("%Y-%m-%dT%H:%M:%S") + TIMEZONE_OFFSET
+    return datetime(day.year, day.month, day.day, hour, minute).strftime(
+        "%Y-%m-%dT%H:%M:%S"
+    ) + TIMEZONE_OFFSET
 
 
 def money(value: float) -> float:
     return round(value + 1e-9, 2)
+
+
+def tracking_number(rng: random.Random, carrier: str) -> str:
+    """Build an invented tracking number that at least looks like the carrier's.
+
+    The numbers are fabricated and track nothing, but each carrier uses a
+    recognizable shape, so a customer reading one is not misled about which
+    website to paste it into.
+    """
+    if carrier == "UPS":
+        return "1Z" + "".join(rng.choice("0123456789") for _ in range(16))
+    if carrier == "FedEx":
+        return "".join(rng.choice("0123456789") for _ in range(12))
+    return "9400" + "".join(rng.choice("0123456789") for _ in range(18))  # USPS
+
+
+def shipping_timeline(
+    rng: random.Random, reference: date, shipment_status: str
+) -> tuple[date, date, date]:
+    """Return (created, shipped, estimated_delivery) for a shipped order.
+
+    The estimated delivery date is chosen *first*, relative to the reference
+    day, and the earlier dates are derived backwards from it. Doing it in this
+    order makes an incoherent timeline impossible to generate: an order still
+    in transit cannot end up with a delivery estimate in the past, which is
+    exactly what a naive "N days ago" spread produces.
+    """
+    if shipment_status == "delivered":
+        estimated = reference - timedelta(days=rng.randint(12, 60))
+    elif shipment_status == "in_transit":
+        estimated = reference + timedelta(days=rng.randint(2, 6))
+    elif shipment_status == "out_for_delivery":
+        estimated = reference + timedelta(days=rng.randint(0, 1))
+    else:  # failure: the attempt happened, the carrier will retry
+        estimated = reference - timedelta(days=rng.randint(1, 3))
+
+    shipped = estimated - timedelta(days=rng.randint(*DELIVERY_DAYS))
+    created = shipped - timedelta(days=rng.randint(*PROCESSING_DAYS))
+    return created, shipped, estimated
 
 
 # ---------------------------------------------------------------------------
@@ -254,24 +281,19 @@ def insert_customers(conn: sqlite3.Connection) -> list[int]:
 
 def insert_catalog(conn: sqlite3.Connection) -> list[dict]:
     catalog = []
-    for title, product_type, price, description, variants in PRODUCTS:
+    for title, product_type, price, description, sku, on_hand in PRODUCTS:
         cursor = conn.execute(
             "INSERT INTO products (title, product_type, price, description) "
             "VALUES (?, ?, ?, ?)",
             (title, product_type, price, description),
         )
         product_id = int(cursor.lastrowid)
-        variant_titles = []
-        for variant_title, inventory in variants:
-            conn.execute(
-                "INSERT INTO variants (product_id, title, inventory_quantity) "
-                "VALUES (?, ?, ?)",
-                (product_id, variant_title, inventory),
-            )
-            variant_titles.append(variant_title)
-        catalog.append(
-            {"id": product_id, "price": price, "variants": variant_titles}
+        conn.execute(
+            "INSERT INTO variants (product_id, title, sku, inventory_quantity) "
+            "VALUES (?, ?, ?, ?)",
+            (product_id, DEFAULT_VARIANT_TITLE, sku, on_hand),
         )
+        catalog.append({"id": product_id, "price": price})
     return catalog
 
 
@@ -286,13 +308,26 @@ def insert_orders(
         order_number = "#%d" % (1001 + index)
         customer_id = customer_ids[index % len(customer_ids)]
 
-        # Newer orders first in the list would be confusing; instead the list
-        # runs oldest to newest, with delivered orders furthest in the past.
-        days_ago = 75 - index * 3
-        created_day = reference - timedelta(days=days_ago)
-        created_at = timestamp(created_day, rng.randint(8, 19), rng.choice([5, 17, 23, 41, 58]))
-
         cancelled_at = None
+        if shipment is not None:
+            created_day, shipped_day, estimated_day = shipping_timeline(
+                rng, reference, shipment
+            )
+        elif fulfillment == "restocked":
+            created_day = reference - timedelta(days=rng.randint(6, 25))
+            shipped_day = estimated_day = None
+        elif financial == "pending":
+            # Payment not confirmed yet, so the order must be recent.
+            created_day = reference - timedelta(days=rng.randint(0, 2))
+            shipped_day = estimated_day = None
+        else:
+            # Paid but not shipped: still inside the published processing window.
+            created_day = reference - timedelta(days=rng.randint(0, 4))
+            shipped_day = estimated_day = None
+
+        created_at = timestamp(
+            created_day, rng.randint(8, 19), rng.choice([5, 17, 23, 41, 58])
+        )
         if fulfillment == "restocked":
             cancelled_day = created_day + timedelta(days=rng.randint(1, 3))
             cancelled_at = timestamp(cancelled_day, rng.randint(9, 17), 30)
@@ -301,39 +336,39 @@ def insert_orders(
             "INSERT INTO orders (order_number, customer_id, financial_status, "
             "fulfillment_status, created_at, cancelled_at, total) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (order_number, customer_id, financial, fulfillment, created_at, cancelled_at, 0.0),
+            (order_number, customer_id, financial, fulfillment, created_at,
+             cancelled_at, 0.0),
         )
         order_id = int(cursor.lastrowid)
 
         subtotal = 0.0
         for product in rng.sample(catalog, rng.randint(1, 3)):
             quantity = rng.randint(1, 3)
-            variant_title = rng.choice(product["variants"])
             subtotal += product["price"] * quantity
             conn.execute(
                 "INSERT INTO line_items (order_id, product_id, variant_title, "
                 "quantity, price) VALUES (?, ?, ?, ?, ?)",
-                (order_id, product["id"], variant_title, quantity, product["price"]),
+                (order_id, product["id"], DEFAULT_VARIANT_TITLE, quantity,
+                 product["price"]),
             )
 
-        shipping = 0.0 if subtotal >= FREE_SHIPPING_THRESHOLD else SHIPPING_COST
+        # Shipping is quoted at checkout by weight and destination, so it is
+        # not modelled here: the total is the merchandise subtotal.
         conn.execute(
-            "UPDATE orders SET total = ? WHERE id = ?",
-            (money(subtotal + shipping), order_id),
+            "UPDATE orders SET total = ? WHERE id = ?", (money(subtotal), order_id)
         )
 
         if shipment is not None:
-            shipped_day = created_day + timedelta(days=rng.randint(1, 3))
-            estimated = shipped_day + timedelta(days=rng.randint(2, 6))
+            carrier = rng.choice(CARRIERS)
             conn.execute(
                 "INSERT INTO fulfillments (order_id, tracking_company, "
                 "tracking_number, estimated_delivery, shipped_at, shipment_status) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     order_id,
-                    rng.choice(CARRIERS),
-                    "VB%09d" % rng.randint(100000000, 999999999),
-                    estimated.isoformat(),
+                    carrier,
+                    tracking_number(rng, carrier),
+                    estimated_day.isoformat(),
                     timestamp(shipped_day, rng.randint(9, 18), 0),
                     shipment,
                 ),
@@ -385,12 +420,17 @@ def report(conn: sqlite3.Connection, db_path: Path, reference: date) -> None:
 
     print("\nSample orders you can use to try the tools:")
     rows = conn.execute(
-        "SELECT o.order_number, c.email, o.financial_status, o.fulfillment_status "
-        "FROM orders o JOIN customers c ON c.id = o.customer_id "
-        "ORDER BY o.id LIMIT 3"
+        """
+        SELECT o.order_number, c.email, o.fulfillment_status, f.shipment_status
+        FROM orders o
+        JOIN customers c ON c.id = o.customer_id
+        LEFT JOIN fulfillments f ON f.order_id = o.id
+        WHERE o.id IN (1, 9, 15, 23)
+        ORDER BY o.id
+        """
     ).fetchall()
-    for order_number, email, financial, fulfillment in rows:
-        print("  %-6s %-28s %s / %s" % (order_number, email, financial, fulfillment))
+    for order_number, email, fulfillment, shipment in rows:
+        print("  %-6s %-28s %-12s %s" % (order_number, email, fulfillment, shipment or "-"))
 
 
 def main(argv: list[str] | None = None) -> int:
