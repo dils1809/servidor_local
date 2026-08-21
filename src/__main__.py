@@ -10,6 +10,9 @@ import argparse
 import logging
 import sys
 
+from .handlers.tools import CAPABILITY_CONFIG as TOOLS_CAPABILITY_CONFIG
+from .handlers.tools import CAPABILITY_NAME as TOOLS_CAPABILITY_NAME
+from .handlers.tools import ToolHandlers
 from .mcp_server import MCPServer, serve
 from .transport import StdioTransport, configure_logging
 
@@ -20,10 +23,17 @@ def build_server() -> MCPServer:
     """Create the server and register every feature it exposes.
 
     Features are registered here, in the composition root, so the protocol
-    layer stays free of business logic. Tools, resources and prompts are added
-    in later milestones.
+    layer stays free of business logic. Resources and prompts are added in
+    later milestones.
     """
-    return MCPServer()
+    server = MCPServer()
+
+    tools = ToolHandlers()
+    server.register_feature(
+        TOOLS_CAPABILITY_NAME, TOOLS_CAPABILITY_CONFIG, tools.methods()
+    )
+
+    return server
 
 
 def main(argv: list[str] | None = None) -> int:
