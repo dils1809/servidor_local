@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 CAPABILITY_NAME = "tools"
 CAPABILITY_CONFIG: dict[str, Any] = {"listChanged": False}
 
-CURRENCY = "GTQ"
+CURRENCY = "USD"
 
 # Bounds on customer-authored text. Without them a single call could write an
 # unbounded blob into the database.
@@ -112,16 +112,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "search_products",
         "title": "Search products",
         "description": (
-            "Search the VIBBO tea catalog by name, tea type or description. "
-            "Returns matching products with their price and the stock "
-            "available for each variant."
+            "Search the VIBBO catalog by product name, product type or "
+            "ingredient. Returns matching products with their price in US "
+            "dollars and the stock available for each variant, so it can also "
+            "answer whether something is currently sold out."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Free text, e.g. 'matcha', 'te verde', 'sin cafeina'.",
+                    "description": "Free text matched against the product name, type and description. Ingredients work too, e.g. 'detox', 'bundle', 'lavender', 'filter bags'.",
                 }
             },
             "required": ["query"],
@@ -148,10 +149,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                                     "type": "object",
                                     "properties": {
                                         "title": {"type": "string"},
+                                        "sku": {"type": ["string", "null"]},
                                         "inventory_quantity": {"type": "integer"},
                                         "in_stock": {"type": "boolean"},
                                     },
-                                    "required": ["title", "inventory_quantity", "in_stock"],
+                                    "required": ["title", "sku", "inventory_quantity", "in_stock"],
                                     "additionalProperties": False,
                                 },
                             },
