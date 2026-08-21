@@ -1,20 +1,16 @@
-"""Data access for the VIBBO support database.
+"""Data access for the VIBBO database.
 
-This module is the only place that speaks SQL. Everything above it receives
-plain dictionaries, so the storage engine could be swapped for the real Shopify
-API without touching the protocol or tool layers.
+The only module that writes SQL. Everything above it gets plain dicts, so
+SQLite could be swapped for the real Shopify API without touching the tools.
 
-Three design rules are enforced here rather than in the tool layer, because a
-rule that lives in the data layer cannot be forgotten by a future caller:
+Three security rules live here instead of in the tool layer, because a rule in
+the data layer cannot be forgotten by a future caller:
 
-1. **No lookup by order number alone.** ``find_order`` requires the email too.
-   Without that pairing, anyone could walk ``#1001``, ``#1002``, ``#1003`` and
-   read every order in the shop.
-2. **The schema stores no address, phone or payment data at all.** The safest
-   way to keep a field out of a model's context is for the field not to exist.
-3. **Every query is parameterized**, and user text used in ``LIKE`` has its
-   wildcards escaped, so a search for ``%`` matches a literal percent sign
-   instead of the whole catalog.
+1. There is no lookup by order number alone. find_order needs the email too,
+   otherwise anyone could walk #1001, #1002, #1003 and read every order.
+2. The schema has no address, phone or payment columns at all. A field that
+   does not exist cannot leak.
+3. Every query is parameterized, and LIKE wildcards in user text are escaped.
 """
 
 from __future__ import annotations
@@ -35,22 +31,20 @@ DB_PATH_ENV_VAR = "VIBBO_DB_PATH"
 SEARCH_RESULT_LIMIT = 10
 LIKE_ESCAPE_CHAR = "\\"
 
-# Timestamps written by the server use the same offset as the seeded data.
+# Same offset as the seeded data.
 TIMEZONE_OFFSET = "-06:00"
 
 
 class DatabaseNotFound(RuntimeError):
-    """Raised when the SQLite file has not been created yet."""
+    """The SQLite file does not exist yet."""
 
 
 def database_path() -> Path:
-    """Resolve the database location, allowing an environment override."""
     override = os.environ.get(DB_PATH_ENV_VAR)
     return Path(override) if override else DEFAULT_DB_PATH
 
 
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
-    """Open the database with sane defaults for this project."""
     resolved = Path(path) if path is not None else database_path()
     if not resolved.exists():
         raise DatabaseNotFound(
@@ -58,7 +52,7 @@ def connect(path: Path | str | None = None) -> sqlite3.Connection:
         )
     conn = sqlite3.connect(resolved)
     conn.row_factory = sqlite3.Row
-    # SQLite leaves foreign keys off unless asked, per connection.
+    # SQLite disables foreign keys unless asked, once per connection.
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -67,10 +61,9 @@ def connect(path: Path | str | None = None) -> sqlite3.Connection:
 # Helpers
 # ---------------------------------------------------------------------------
 def normalize_order_number(value: str) -> str:
-    """Accept ``1001``, ``#1001`` or ``ES#1001`` and return ``#1001``.
+    """Accept 1001 or #1001 and return #1001.
 
-    Customers copy the order number out of an email and rarely include the
-    leading hash. Normalizing here means the tool layer does not have to guess.
+    Customers copy the number from an email and usually drop the hash.
     """
     cleaned = value.strip()
     if cleaned.startswith("#"):
@@ -79,14 +72,14 @@ def normalize_order_number(value: str) -> str:
 
 
 def escape_like(value: str) -> str:
-    """Neutralize LIKE wildcards in user-supplied text."""
+    """Escape LIKE wildcards so searching for % does not match everything."""
     for char in (LIKE_ESCAPE_CHAR, "%", "_"):
         value = value.replace(char, LIKE_ESCAPE_CHAR + char)
     return value
 
 
 def now_timestamp() -> str:
-    """Current time as an RFC 3339 string, matching the seeded format."""
+    """Current time in the same RFC 3339 format as the seeded rows."""
     return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%dT%H:%M:%S") + (
         TIMEZONE_OFFSET
     )
@@ -102,11 +95,10 @@ def _rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
 def find_order(
     conn: sqlite3.Connection, email: str, order_number: str
 ) -> dict[str, Any] | None:
-    """Look up one order by the pair (customer email, order number).
+    """Look up an order by email + order number. Both must match.
 
-    Returns ``None`` when no order matches *both*. The caller must not reveal
-    which half failed: saying "that order exists but the email is wrong" would
-    confirm the order number to whoever asked.
+    Returns None when either one is wrong. The caller must not say which half
+    failed, or it would confirm that an order number exists.
     """
     order_row = conn.execute(
         """
@@ -160,7 +152,7 @@ def find_order(
 def search_products(
     conn: sqlite3.Connection, query: str, limit: int = SEARCH_RESULT_LIMIT
 ) -> list[dict[str, Any]]:
-    """Find products whose title, type or description matches *query*."""
+    """Find products by title, type or description. Ingredients match too."""
     pattern = "%" + escape_like(query.strip()) + "%"
     rows = conn.execute(
         """
@@ -210,15 +202,15 @@ def search_products(
 
 
 # ---------------------------------------------------------------------------
-# Support tickets (the only write path)
+# Support tickets (the only write)
 # ---------------------------------------------------------------------------
 def create_support_ticket(
     conn: sqlite3.Connection, email: str, subject: str, description: str
 ) -> dict[str, Any]:
-    """Record a support ticket and return its identifiers.
+    """Store a ticket and return its id.
 
-    The subject and description are stored exactly as received. They are
-    customer-authored text, treated as data and never interpreted.
+    Subject and description are stored exactly as received. They are customer
+    text: data, never instructions.
     """
     created_at = now_timestamp()
     cursor = conn.execute(

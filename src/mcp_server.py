@@ -1,17 +1,14 @@
 """MCP lifecycle and method routing.
 
-This layer turns parsed JSON-RPC messages into MCP semantics. It knows nothing
-about stdio (it talks to the abstract ``Transport``) and nothing about SQLite
-(feature handlers are injected through ``register_feature``). Those two
-boundaries are what make the same server reusable over HTTP later.
+Turns parsed JSON-RPC messages into MCP behaviour. Does not know about stdio
+(it uses the abstract Transport) and does not know about SQLite (handlers are
+injected with register_feature).
 
 Lifecycle, per MCP revision 2025-11-25::
 
     UNINITIALIZED --initialize--> INITIALIZING --notifications/initialized--> READY
 
-Before ``initialize`` succeeds only ``initialize`` and ``ping`` are accepted;
-anything else is an invalid request. ``notifications/initialized`` is a
-notification and is therefore never answered, not even to acknowledge it.
+Only initialize and ping are accepted before the handshake.
 """
 
 from __future__ import annotations
@@ -38,10 +35,9 @@ from .transport import Transport
 logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = "2025-11-25"
-"""The revision this server implements and offers by default."""
 
+# Revisions we can speak, newest first.
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
-"""Revisions this server can speak, newest first, used for negotiation."""
 
 SERVER_NAME = "vibbo-mcp-server"
 SERVER_TITLE = "VIBBO Tea Shop Support"
@@ -54,8 +50,8 @@ SERVER_INSTRUCTIONS = (
     "resources. All data is synthetic."
 )
 
+# Allowed before the handshake finishes.
 PRE_INIT_METHODS = frozenset({"initialize", "ping"})
-"""Methods accepted before the lifecycle handshake completes."""
 
 
 class LifecycleState(Enum):
@@ -93,8 +89,8 @@ class MCPServer:
         self._notifications: dict[str, Callable[[dict[str, Any]], None]] = {
             "notifications/initialized": self._handle_initialized,
         }
-        # Capabilities start empty and grow as features register themselves, so
-        # the server never advertises something it cannot actually serve.
+        # Starts empty and grows as features register, so we never advertise
+        # something we cannot serve.
         self._capabilities: dict[str, Any] = {}
 
     # -- registration ------------------------------------------------------
@@ -104,7 +100,7 @@ class MCPServer:
         config: dict[str, Any],
         methods: dict[str, MethodHandler],
     ) -> None:
-        """Attach a feature (tools, resources, prompts) and its capability entry."""
+        """Attach a feature (tools, resources, prompts) and its capability."""
         overlap = set(methods) & set(self._methods)
         if overlap:
             raise ValueError("Methods already registered: " + ", ".join(sorted(overlap)))
@@ -123,7 +119,7 @@ class MCPServer:
 
     # -- dispatch ----------------------------------------------------------
     def handle_message(self, message: IncomingMessage) -> dict[str, Any] | None:
-        """Process one message. Returns a response, or ``None`` for notifications."""
+        """Process one message. Returns None for notifications."""
         if isinstance(message, Notification):
             self._handle_notification(message)
             return None
@@ -132,8 +128,7 @@ class MCPServer:
     def _handle_notification(self, message: Notification) -> None:
         handler = self._notifications.get(message.method)
         if handler is None:
-            # Unknown notifications are ignored by design: replying to one would
-            # send the client a response it has no pending id for.
+            # Ignored on purpose: a reply would arrive with no id to match it.
             logger.info("ignoring unknown notification %r", message.method)
             return
         try:
@@ -158,8 +153,7 @@ class MCPServer:
             logger.info("request %r failed: %s (%s)", message.method, exc.message, exc.code)
             return exc.to_response(message.id)
         except Exception as exc:
-            # Never let an unexpected exception kill the connection: the client
-            # is entitled to a response for every request it sent.
+            # Every request gets an answer, even when a handler crashes.
             logger.exception("unhandled error in method %r", message.method)
             return InternalError(data={"exception": type(exc).__name__}).to_response(
                 message.id
@@ -189,8 +183,8 @@ class MCPServer:
                 data={"received": requested},
             )
 
-        # Echo the client's revision when we speak it; otherwise offer ours and
-        # let the client decide whether to continue or disconnect.
+        # Echo the client's revision if we speak it, otherwise offer ours and
+        # let the client decide whether to continue.
         if requested in SUPPORTED_PROTOCOL_VERSIONS:
             negotiated = requested
         else:
@@ -233,13 +227,12 @@ class MCPServer:
         logger.info("handshake complete, server is ready")
 
     def _handle_ping(self, params: dict[str, Any]) -> dict[str, Any]:
-        # Ping carries no data in either direction; an empty result is the
-        # whole contract.
+        # Ping carries no data either way. An empty result is the whole reply.
         return {}
 
 
 def _as_object(params: Any) -> dict[str, Any]:
-    """Normalize ``params`` to a dict. MCP only ever uses named parameters."""
+    """MCP always uses named parameters, so params must be a dict."""
     if params is None:
         return {}
     if isinstance(params, dict):
@@ -251,11 +244,10 @@ def _as_object(params: Any) -> dict[str, Any]:
 
 
 def serve(transport: Transport, server: MCPServer) -> None:
-    """Read, dispatch and reply until the peer closes the channel.
+    """Read, dispatch and reply until the peer disconnects.
 
-    This is the composition root: the only place where transport and protocol
-    meet. It depends on the abstract ``Transport``, so swapping stdio for HTTP
-    later does not touch this function.
+    The only place where transport and protocol meet. It depends on the
+    abstract Transport, so swapping stdio for HTTP does not touch this code.
     """
     logger.info("%s %s listening", server.name, server.version)
     while True:
@@ -272,7 +264,6 @@ def serve(transport: Transport, server: MCPServer) -> None:
             message = parse_message(raw)
         except JsonRpcError as exc:
             if exc.is_notification:
-                # A malformed notification gets no reply, by definition.
                 logger.info("dropping malformed notification: %s", exc.message)
                 continue
             _write(transport, exc.to_response())

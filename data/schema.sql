@@ -1,11 +1,10 @@
 -- VIBBO tea shop -- synthetic support database.
 --
--- The table and column names mirror the Shopify Admin API so the server could
--- later be pointed at a real store without reshaping the domain layer. All the
--- data in it is fabricated; there is no connection to any production store.
+-- Table and column names follow the Shopify Admin API, so the server could
+-- later point at a real store without reshaping the domain layer.
 --
--- Running this file drops every table first, which is what makes the seed
--- reproducible: the same script always yields the same database.
+-- This file drops every table first, so re-running the seed always rebuilds
+-- the same database.
 
 PRAGMA foreign_keys = ON;
 
@@ -27,7 +26,7 @@ CREATE TABLE customers (
     last_name   TEXT NOT NULL
 );
 
--- Order lookups match on the email, so it is worth indexing case-folded.
+-- Order lookups match on the email, so index it case-folded.
 CREATE UNIQUE INDEX idx_customers_email_lower ON customers (lower(email));
 
 -- ---------------------------------------------------------------------------
@@ -44,8 +43,8 @@ CREATE TABLE products (
 CREATE TABLE variants (
     id                 INTEGER PRIMARY KEY,
     product_id         INTEGER NOT NULL REFERENCES products (id) ON DELETE CASCADE,
-    -- Shopify names the implicit variant of an option-less product
-    -- 'Default Title'. Every VIBBO product is sold that way today.
+    -- Shopify calls the single variant of a product with no options
+    -- 'Default Title'. Every VIBBO product is sold that way.
     title              TEXT NOT NULL,
     sku                TEXT,
     inventory_quantity INTEGER NOT NULL CHECK (inventory_quantity >= 0)
@@ -68,9 +67,8 @@ CREATE TABLE orders (
         fulfillment_status IN ('unfulfilled', 'partial', 'fulfilled', 'restocked')
     ),
     created_at        TEXT NOT NULL,
-    -- Set only when the order was cancelled. Distinguishes a cancellation from
-    -- an ordinary refund, which otherwise look identical in the two status
-    -- columns above.
+    -- Set only when the order was cancelled. Without it, a cancellation and
+    -- a plain refund look identical in the two columns above.
     cancelled_at      TEXT,
     total             REAL NOT NULL CHECK (total >= 0)
 );
@@ -95,8 +93,8 @@ CREATE TABLE fulfillments (
     tracking_number    TEXT NOT NULL,
     estimated_delivery TEXT NOT NULL,
     shipped_at         TEXT NOT NULL,
-    -- Shopify's own field. Stored rather than derived from estimated_delivery
-    -- so that a seeded order does not silently change state as time passes.
+    -- A real Shopify field. Stored, not derived from estimated_delivery, so a
+    -- seeded order does not change state on its own as time passes.
     shipment_status    TEXT NOT NULL CHECK (
         shipment_status IN ('in_transit', 'out_for_delivery', 'delivered', 'failure')
     )

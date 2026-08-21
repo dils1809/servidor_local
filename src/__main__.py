@@ -1,7 +1,7 @@
-"""Entry point: ``python -m src``.
+"""Entry point: python -m src
 
-Wires the three layers together and hands control to the read/dispatch loop.
-Swapping stdio for another transport later is a one-line change here.
+Wires the layers together and starts the read/dispatch loop. Swapping stdio for
+another transport is a one-line change here.
 """
 
 from __future__ import annotations
@@ -20,11 +20,10 @@ LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
 def build_server() -> MCPServer:
-    """Create the server and register every feature it exposes.
+    """Create the server and register its features.
 
-    Features are registered here, in the composition root, so the protocol
-    layer stays free of business logic. Resources and prompts are added in
-    later milestones.
+    Features are registered here so the protocol layer stays free of business
+    logic. Resources and prompts get added in later milestones.
     """
     server = MCPServer()
 
@@ -46,8 +45,8 @@ def main(argv: list[str] | None = None) -> int:
         "--log-level",
         default="INFO",
         choices=LOG_LEVELS,
-        help="Verbosity of the diagnostic log, which is always written to "
-        "stderr so stdout stays protocol-only (default: %(default)s).",
+        help="Log verbosity. Logs always go to stderr so stdout stays "
+        "protocol only (default: %(default)s).",
     )
     args = parser.parse_args(argv)
 

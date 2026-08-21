@@ -1,20 +1,16 @@
-"""The ``tools`` capability: what the model is allowed to do.
+"""The tools capability: what the model is allowed to do.
 
-Two kinds of failure live in this file and they are answered differently, as
-the MCP specification requires:
+Two kinds of failure, answered differently:
 
-* **Protocol errors** -- an unknown tool name, a missing argument, a wrong
-  type -- are JSON-RPC errors (-32601 / -32602). The model never sees them;
-  they mean the client sent something malformed.
-* **Execution errors** -- "no order matches that email" -- are *successful*
-  responses carrying ``isError: true``. The model does see them, which is the
-  point: it needs to read the failure in order to tell the customer what went
-  wrong, or to offer opening a ticket.
+* Protocol errors (unknown tool, missing argument) are JSON-RPC errors. The
+  model never sees them; they mean the client sent something malformed.
+* Execution errors ("no order matches that email") are successful responses
+  with isError: true. The model does see them, so it can tell the customer
+  what to check or offer a ticket.
 
-Every tool declares an ``outputSchema`` and returns ``structuredContent``. For
-``get_order_status`` that turns the privacy rule into a machine-checkable
-contract: the schema lists exactly five fields, so no future edit can quietly
-start returning an address.
+Each tool declares an outputSchema and returns structuredContent. For
+get_order_status the schema lists exactly five fields, so a later edit cannot
+quietly start returning an address.
 """
 
 from __future__ import annotations
@@ -34,14 +30,13 @@ CAPABILITY_CONFIG: dict[str, Any] = {"listChanged": False}
 
 CURRENCY = "USD"
 
-# Bounds on customer-authored text. Without them a single call could write an
-# unbounded blob into the database.
+# Limits on customer text, so one call cannot write an unbounded blob.
 MAX_SUBJECT_LENGTH = 200
 MAX_DESCRIPTION_LENGTH = 5000
 MAX_QUERY_LENGTH = 100
 
-# One message for both "no such order" and "email does not match". Telling the
-# caller which half failed would confirm that an order number exists.
+# Same message whether the order does not exist or the email does not match.
+# Saying which half failed would confirm that an order number exists.
 ORDER_NOT_FOUND_MESSAGE = (
     "No order matches that order number and email address together. "
     "Check that both are exactly as they appear in the confirmation email."
@@ -253,11 +248,10 @@ def _require_string(
 
 
 def _reject_unknown_arguments(arguments: dict[str, Any], tool_name: str) -> None:
-    """Enforce the ``additionalProperties: false`` each input schema declares.
+    """Enforce the additionalProperties: false that each input schema declares.
 
-    Silently ignoring unknown arguments would make the published schema a lie,
-    and would hide client bugs -- a misspelled ``order_no`` would look like a
-    missing order rather than a typo.
+    Ignoring unknown arguments would make the published schema a lie, and would
+    hide typos: a misspelled order_no would look like a missing order.
     """
     allowed = set(TOOL_SCHEMAS[tool_name]["properties"])
     unexpected = sorted(set(arguments) - allowed)
@@ -270,9 +264,8 @@ def _reject_unknown_arguments(arguments: dict[str, Any], tool_name: str) -> None
 
 def _require_email(arguments: dict[str, Any], name: str = "email") -> str:
     value = _require_string(arguments, name, max_length=254)
-    # Deliberately loose: this rejects obvious typos, not exotic-but-valid
-    # addresses. Rejecting a real customer's address would be worse than
-    # letting a lookup return nothing.
+    # Loose on purpose: catches typos, not unusual but valid addresses.
+    # Rejecting a real address is worse than letting the lookup find nothing.
     local, separator, domain = value.partition("@")
     if not separator or not local or "." not in domain or domain.startswith("."):
         raise InvalidParams(
@@ -288,9 +281,8 @@ def _require_email(arguments: dict[str, Any], name: str = "email") -> str:
 def _success(payload: dict[str, Any]) -> dict[str, Any]:
     """Wrap a payload as a successful tool result.
 
-    The text block is the same data serialized, because that is what the model
-    actually reads; ``structuredContent`` is what a client can validate
-    against the declared ``outputSchema``.
+    The text block is what the model reads. structuredContent is the same data,
+    for a client that validates against the declared outputSchema.
     """
     return {
         "content": [
@@ -302,16 +294,15 @@ def _success(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _failure(message: str) -> dict[str, Any]:
-    """An execution failure the model is meant to read and act on.
+    """A failure the model is meant to read and act on.
 
-    No ``structuredContent`` here: the declared output schema describes a
-    successful result, and a failure does not conform to it.
+    No structuredContent: the output schema describes a successful result.
     """
     return {"content": [{"type": "text", "text": message}], "isError": True}
 
 
 def describe_order_status(order: dict[str, Any]) -> str:
-    """Turn the Shopify status columns into one sentence a customer understands."""
+    """Turn the Shopify status columns into one line a customer understands."""
     if order.get("cancelled_at"):
         return "Cancelled"
 
@@ -345,11 +336,11 @@ ConnectionFactory = Callable[[], sqlite3.Connection]
 
 
 class ToolHandlers:
-    """Implements ``tools/list`` and ``tools/call``.
+    """Implements tools/list and tools/call.
 
-    The connection factory is injected so tests can point at a scratch
-    database. Connections are opened per call and closed immediately, which
-    keeps this class safe to reuse under a threaded HTTP transport later.
+    The connection factory is injected so tests can use a scratch database.
+    One connection per call, closed right after, so this stays safe to reuse
+    under a threaded HTTP transport later.
     """
 
     def __init__(self, connect: ConnectionFactory = db.connect) -> None:
@@ -365,7 +356,7 @@ class ToolHandlers:
 
     # -- tools/list --------------------------------------------------------
     def list_tools(self, params: dict[str, Any]) -> dict[str, Any]:
-        # No pagination: three tools fit in one page, so no cursor is returned.
+        # Three tools fit in one page, so no pagination cursor is returned.
         return {"tools": TOOL_DEFINITIONS}
 
     # -- tools/call --------------------------------------------------------
@@ -376,8 +367,8 @@ class ToolHandlers:
 
         implementation = self._tools.get(name)
         if implementation is None:
-            # An unknown tool is the client's mistake, not a tool failure, so
-            # it is a protocol error rather than an isError result.
+            # The client's mistake, not a tool failure, so it is a protocol
+            # error instead of an isError result.
             raise InvalidParams(
                 "Unknown tool: " + name,
                 data={"name": name, "available": sorted(self._tools)},
@@ -408,14 +399,14 @@ class ToolHandlers:
 
         order = db.find_order(connection, email, order_number)
         if order is None:
-            # Logged without the email so the diagnostic log does not become a
-            # second copy of the customer data.
+            # No email in the log, so it does not become a second copy of the
+            # customer data.
             logger.info("order lookup miss for %r", db.normalize_order_number(order_number))
             return _failure(ORDER_NOT_FOUND_MESSAGE)
 
         fulfillment = order.get("fulfillment") or {}
-        # This dictionary is the entire privacy boundary. Anything not listed
-        # here cannot reach the model, whatever the database holds.
+        # This dict is the whole privacy boundary. Anything not listed here
+        # never reaches the model, whatever the database holds.
         payload = {
             "status": describe_order_status(order),
             "carrier": fulfillment.get("tracking_company"),
@@ -439,8 +430,7 @@ class ToolHandlers:
         products = db.search_products(connection, query)
 
         if not products:
-            # An empty catalog search is a legitimate answer, not a failure:
-            # the model should say "we do not carry that" and move on.
+            # Not a failure: the model should say "we do not carry that".
             return _success(
                 {"query": query, "count": 0, "currency": CURRENCY, "products": []}
             )
@@ -463,8 +453,6 @@ class ToolHandlers:
             arguments, "description", max_length=MAX_DESCRIPTION_LENGTH
         )
 
-        # subject and description are customer-authored text. They are stored
-        # verbatim and never parsed, interpreted or executed: to this server
-        # they are opaque data.
+        # Customer text is stored as is, never parsed or interpreted.
         ticket = db.create_support_ticket(connection, email, subject, description)
         return _success(ticket)

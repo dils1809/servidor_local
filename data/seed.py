@@ -1,27 +1,19 @@
-"""Populate the VIBBO database with synthetic support data.
+"""Fill the VIBBO database with synthetic support data.
 
-Run it from the repository root::
+Run from the repository root::
 
     python data/seed.py
 
-What is real and what is not
-----------------------------
-The **catalog** mirrors the public VIBBO storefront (drinkvibbo.com), which
-runs on Shopify: product titles, prices in USD, descriptions, SKUs, the
-``Default Title`` variant name and the sold-out flags all come from the store's
-public ``/products.json`` feed. Keeping them accurate is what lets the support
-chatbot answer real questions about real products.
+Real: the catalog. Titles, prices, descriptions, SKUs and the sold-out flags
+come from the public Shopify feed of drinkvibbo.com.
 
-Everything that identifies a person or a transaction is **invented**: the eight
-customers, their email addresses, the twenty-five orders, tracking numbers and
-support tickets do not exist and never did. The exact on-hand unit counts are
-invented too, because Shopify's public feed exposes only ``available:
-true/false``; the sold-out products are seeded at zero to match it.
+Invented: everything about people. The 8 customers, 25 orders, tracking numbers
+and tickets do not exist. Unit counts are invented too, since the public feed
+only says available true/false.
 
-The script is deterministic: a fixed random seed and a fixed reference date
-mean every run produces byte-identical data on any machine, so the order
-numbers quoted in the README are always the ones in the database. Pass
-``--reference-date`` to anchor the timeline on a different day.
+Deterministic: fixed seed plus fixed reference date, so every run gives the
+same data and the README can quote real order numbers. Use --reference-date to
+move the timeline to another day.
 """
 
 from __future__ import annotations
@@ -60,9 +52,8 @@ DEFAULT_VARIANT_TITLE = "Default Title"
 # (title, product_type, price, description, sku, on_hand)
 #
 # product_type is empty in the Shopify feed, so it is filled in here to give
-# search_products something meaningful to match on. on_hand is synthetic: zero
-# where the storefront reports the product sold out, an invented positive count
-# otherwise.
+# search_products something to match. on_hand is invented: zero where the store
+# says sold out, a made-up number otherwise.
 PRODUCTS = [
     (
         "Energy & Hydration Functional Tea",
@@ -223,11 +214,10 @@ def money(value: float) -> float:
 
 
 def tracking_number(rng: random.Random, carrier: str) -> str:
-    """Build an invented tracking number that at least looks like the carrier's.
+    """Fake tracking number shaped like the carrier's real ones.
 
-    The numbers are fabricated and track nothing, but each carrier uses a
-    recognizable shape, so a customer reading one is not misled about which
-    website to paste it into.
+    They track nothing, but the right shape avoids sending a customer to the
+    wrong carrier's website.
     """
     if carrier == "UPS":
         return "1Z" + "".join(rng.choice("0123456789") for _ in range(16))
@@ -241,11 +231,9 @@ def shipping_timeline(
 ) -> tuple[date, date, date]:
     """Return (created, shipped, estimated_delivery) for a shipped order.
 
-    The estimated delivery date is chosen *first*, relative to the reference
-    day, and the earlier dates are derived backwards from it. Doing it in this
-    order makes an incoherent timeline impossible to generate: an order still
-    in transit cannot end up with a delivery estimate in the past, which is
-    exactly what a naive "N days ago" spread produces.
+    The delivery estimate is picked first, then the earlier dates are derived
+    backwards from it. That way an order in transit can never end up with a
+    delivery date in the past, which is what a plain "N days ago" spread does.
     """
     if shipment_status == "delivered":
         estimated = reference - timedelta(days=rng.randint(12, 60))
@@ -352,8 +340,8 @@ def insert_orders(
                  product["price"]),
             )
 
-        # Shipping is quoted at checkout by weight and destination, so it is
-        # not modelled here: the total is the merchandise subtotal.
+        # Shipping is quoted at checkout, so it is not modelled. The total is
+        # just the merchandise subtotal.
         conn.execute(
             "UPDATE orders SET total = ? WHERE id = ?", (money(subtotal), order_id)
         )

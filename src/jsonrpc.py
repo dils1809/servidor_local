@@ -1,18 +1,10 @@
-"""JSON-RPC 2.0 message layer, implemented by hand.
+"""JSON-RPC 2.0 messages: parsing, validation and errors.
 
-This module is deliberately unaware of both MCP and of how bytes reach the
-process. It only knows the JSON-RPC 2.0 specification
-(https://www.jsonrpc.org/specification). Keeping it isolated is what lets the
-same server run over stdio today and over HTTP later without changes here.
+Knows nothing about MCP or about how bytes arrive.
 
-Two distinctions matter for the rest of the project:
-
-* A **request** carries an ``id`` and expects exactly one response.
-* A **notification** carries no ``id`` and MUST NOT be answered, not even
-  when it is malformed.
-
-Batching (a JSON array of messages) is part of JSON-RPC 2.0 but was removed
-from MCP in revision 2025-11-25, so it is rejected here as an invalid request.
+A request has an id and gets exactly one response.
+A notification has no id and is never answered, even when it is malformed.
+Batches are rejected: MCP dropped them in revision 2025-11-25.
 """
 
 from __future__ import annotations
@@ -37,11 +29,10 @@ RequestId = Union[str, int]
 # Errors
 # --------------------------------------------------------------------------
 class JsonRpcError(Exception):
-    """A JSON-RPC error that can be turned into a wire response.
+    """A JSON-RPC error that knows how to become a response.
 
-    ``request_id`` and ``is_notification`` are filled in by :func:`parse_message`
-    on a best-effort basis so the dispatcher knows whether to reply at all and,
-    if so, which id to echo back.
+    parse_message() fills in request_id and is_notification so the dispatcher
+    knows whether to reply at all, and with which id.
     """
 
     code: int = INTERNAL_ERROR
@@ -116,7 +107,7 @@ class Request:
 
 @dataclass(frozen=True)
 class Notification:
-    """An incoming one-way message. Never answered, not even on error."""
+    """An incoming one-way message. Never answered."""
 
     method: str
     params: dict[str, Any] | list[Any] | None = None
@@ -133,31 +124,28 @@ IncomingMessage = Union[Request, Notification]
 # Parsing
 # --------------------------------------------------------------------------
 def _is_valid_id(value: Any) -> bool:
-    # bool is a subclass of int in Python, but `true` is not a valid id.
+    # bool is a subclass of int in Python, but true is not a valid id.
     if isinstance(value, bool):
         return False
     return isinstance(value, (str, int))
 
 
 def parse_message(raw: str) -> IncomingMessage:
-    """Turn one raw JSON text into a :class:`Request` or :class:`Notification`.
+    """Parse one line of JSON into a Request or a Notification.
 
-    Raises :class:`JsonRpcError` (already annotated with ``request_id`` and
-    ``is_notification``) when the text is not a well-formed JSON-RPC 2.0
-    message.
+    Raises JsonRpcError when the text is not a valid JSON-RPC 2.0 message.
     """
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        # No id can be recovered from unparseable text: the spec says to reply
-        # with a null id.
+        # Broken text has no recoverable id, so the reply uses id null.
         raise ParseError(data=str(exc)) from exc
 
     return parse_payload(payload)
 
 
 def parse_payload(payload: Any) -> IncomingMessage:
-    """Validate an already-decoded JSON value as a JSON-RPC 2.0 message."""
+    """Validate an already-decoded JSON value."""
     if isinstance(payload, list):
         raise InvalidRequest("Batch requests are not supported")
     if not isinstance(payload, dict):
@@ -166,7 +154,7 @@ def parse_payload(payload: Any) -> IncomingMessage:
     has_id = "id" in payload
     raw_id = payload.get("id")
 
-    # The id is validated first so that every later error can echo it back.
+    # Check the id first so later errors can echo it back.
     if has_id and not _is_valid_id(raw_id):
         raise InvalidRequest(
             "The 'id' member must be a string or an integer",
@@ -176,6 +164,7 @@ def parse_payload(payload: Any) -> IncomingMessage:
     try:
         return _build_message(payload, has_id=has_id, raw_id=raw_id)
     except JsonRpcError as exc:
+        # No id means it was a notification, so nobody is waiting for a reply.
         exc.request_id = raw_id if has_id else None
         exc.is_notification = not has_id
         raise
@@ -214,14 +203,13 @@ def _build_message(
 # Response building
 # --------------------------------------------------------------------------
 def make_response(request_id: RequestId, result: Any) -> dict[str, Any]:
-    """Build a successful response object."""
     return {"jsonrpc": JSONRPC_VERSION, "id": request_id, "result": result}
 
 
 def make_error_response(
     request_id: RequestId | None, error: JsonRpcError
 ) -> dict[str, Any]:
-    """Build an error response object. A null id means "id unknown"."""
+    """Build an error response. A null id means the id was unknown."""
     return {
         "jsonrpc": JSONRPC_VERSION,
         "id": request_id,
@@ -232,8 +220,7 @@ def make_error_response(
 def encode(message: dict[str, Any]) -> str:
     """Serialize one message to a single line of JSON.
 
-    ``json.dumps`` escapes control characters inside strings, so the result
-    never contains a raw newline. That is what makes newline-delimited framing
-    safe for the stdio transport.
+    json.dumps escapes newlines inside strings, so the result never contains a
+    raw newline. That is what makes newline framing safe.
     """
     return json.dumps(message, ensure_ascii=False, separators=(",", ":"))
