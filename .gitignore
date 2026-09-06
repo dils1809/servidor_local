@@ -13,3 +13,11 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Local debugging output
+*.log
+protocolo.txt
+
+# Chatbot session logs and secrets
+logs/
+.env
