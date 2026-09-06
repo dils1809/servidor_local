@@ -1,0 +1,37 @@
+{
+  "servers": [
+    {
+      "name": "vibbo",
+      "description": "VIBBO tea shop customer support: orders, catalog, tickets, policies.",
+      "command": [
+        "python",
+        "-m",
+        "src"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "filesystem",
+      "description": "Official Anthropic Filesystem server. Reads and writes files under the workspace directory.",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "{workspace}"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "git",
+      "description": "Official Anthropic Git server (mcp-server-git). Reads history and operates on the workspace repository.",
+      "command": [
+        "python",
+        "-m",
+        "mcp_server_git",
+        "--repository",
+        "{workspace}"
+      ],
+      "enabled": true
+    }
+  ]
+}
