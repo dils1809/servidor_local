@@ -15,6 +15,7 @@ from pathlib import Path
 import anthropic
 
 from . import ui
+from .credentials import find_api_key
 from .host import Host, load_config
 from .logbook import Logbook
 from .mcp_client import MCPClientError
@@ -60,22 +61,25 @@ def main(argv: list[str] | None = None) -> int:
         stream=sys.stderr,
     )
 
-    # The Windows console defaults to cp1252, which mangles anything the
-    # model writes outside Latin-1. Protocol traffic is already UTF-8.
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            reconfigure(encoding="utf-8", errors="replace")
-
-    if not args.no_color:
+    if args.no_color:
+        # Still fix the encoding: only the colour is being turned off.
+        ui.use_utf8()
+    else:
         ui.enable()
 
-    try:
-        client = anthropic.Anthropic()
-    except Exception as exc:  # noqa: BLE001
-        ui.error(f"Could not create the Anthropic client: {exc}")
-        ui.note("Set ANTHROPIC_API_KEY and open a new terminal.")
+    api_key, source = find_api_key(WORKSPACE)
+    if not api_key:
+        ui.error("No Anthropic API key found.")
+        print()
+        ui.note("Get one at console.anthropic.com, then set it:")
+        ui.note('  [Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-ant-...", "User")')
+        print()
+        ui.note("Then open a NEW terminal. A program only sees variables that")
+        ui.note("existed when it started.")
+        print()
         return 1
+
+    client = anthropic.Anthropic(api_key=api_key)
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     logbook = Logbook(LOG_DIR / f"session-{stamp}.jsonl")
@@ -101,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     ui.banner(host.clients, host.failures, len(host.tools_for_llm()))
+    if source != "environment":
+        ui.note(f"  api key read from {source}")
+        print()
 
     try:
         _loop(host, session, logbook, colours)
@@ -152,6 +159,9 @@ def _loop(host: Host, session: Session, logbook: Logbook, colours: dict) -> None
             continue
         except anthropic.APIConnectionError:
             ui.error("Could not reach the API. Check the network.")
+            continue
+        except TypeError as exc:
+            ui.error(f"The API client is not configured: {exc}")
             continue
 
         ui.assistant(result.text or "(no answer)")

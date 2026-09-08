@@ -44,9 +44,27 @@ SERVER_COLOURS = (VIOLET, BLUE, GREEN, AMBER)
 _enabled = True
 
 
+def use_utf8() -> None:
+    """Make stdout and stderr accept anything the model writes.
+
+    The Windows console defaults to cp1252, so a bullet or a dash raises
+    UnicodeEncodeError mid-print. This lives here rather than in one entry
+    point so every script that prints gets it.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def enable() -> bool:
-    """Turn on ANSI handling. Returns False if the terminal cannot do colour."""
+    """Turn on UTF-8 and ANSI handling.
+
+    Returns False if the terminal cannot do colour. Encoding is fixed either
+    way: colour is optional, not crashing is not.
+    """
     global _enabled
+    use_utf8()
     if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
         _enabled = False
         return False
