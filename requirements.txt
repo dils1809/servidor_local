@@ -1,9 +1,44 @@
-# This project intentionally has no third-party dependencies.
+# Dependencies, split by what you actually want to run.
 #
-# The MCP protocol and the JSON-RPC 2.0 layer are implemented by hand, as
-# required by the course assignment: no official MCP SDK, no FastMCP, no
-# protocol libraries. Everything below is part of the Python 3.11+ standard
-# library and therefore needs no installation:
+# ---------------------------------------------------------------------------
+# The MCP server (src/) needs NOTHING.
+# ---------------------------------------------------------------------------
+# JSON-RPC 2.0, the MCP lifecycle, the NDJSON framing and the HTTP transport
+# are all implemented by hand, as the assignment requires: no official MCP
+# SDK, no FastMCP, no protocol library of any kind. The server runs on a bare
+# Python 3.11+ install using only the standard library:
 #
 #   json, sqlite3, sys, os, pathlib, dataclasses, typing, enum, logging,
-#   datetime, random, argparse, unittest
+#   datetime, random, argparse, threading, uuid, http.server
+#
+# So this works with no installation at all:
+#
+#   python -m src
+#   python -m src --http
+#
+# ---------------------------------------------------------------------------
+# The chatbot (chatbot/) needs these two.
+# ---------------------------------------------------------------------------
+# Neither one implements MCP. The prohibition in the assignment is on protocol
+# libraries; these are the LLM client and an official Anthropic server.
+
+# The Anthropic API client, used to talk to Claude. This is the LLM SDK, not
+# an MCP SDK: chatbot/mcp_client.py and chatbot/http_client.py speak the
+# protocol themselves, reusing src/jsonrpc.py.
+anthropic==1.4.0
+
+# The official Git MCP server from Anthropic, which the assignment asks the
+# chatbot to consume. It brings the MCP SDK in as its own dependency; that SDK
+# is used by Anthropic's server, never by this project's code.
+mcp-server-git==2026.8.18
+
+# ---------------------------------------------------------------------------
+# Not installable with pip
+# ---------------------------------------------------------------------------
+# The official Filesystem MCP server is a Node package. It needs Node.js 18+
+# on PATH and is fetched on first use by npx, so there is nothing to install
+# ahead of time:
+#
+#   npx -y @modelcontextprotocol/server-filesystem <directory>
+#
+# Developed against Node v22.14.0 and npx 10.9.2.
