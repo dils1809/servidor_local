@@ -21,6 +21,7 @@ from typing import Any
 
 from src import jsonrpc
 
+from .http_client import HttpMCPClient
 from .logbook import Logbook
 from .mcp_client import MCPClient, MCPClientError
 
@@ -37,20 +38,29 @@ MAX_TOOL_NAME = 128
 
 @dataclass
 class ServerConfig:
+    """One server entry. Either a command to launch, or a url to call."""
+
     name: str
     description: str
-    command: list[str]
+    command: list[str] | None = None
+    url: str | None = None
     enabled: bool = True
+
+    @property
+    def is_remote(self) -> bool:
+        return self.url is not None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> ServerConfig:
-        missing = {"name", "command"} - set(raw)
-        if missing:
-            raise ValueError(f"server entry is missing {sorted(missing)}")
+        if "command" not in raw and "url" not in raw:
+            raise ValueError(f"server {raw.get('name', '?')} needs a command or a url")
+        if "name" not in raw:
+            raise ValueError("server entry is missing a name")
         return cls(
             name=raw["name"],
             description=raw.get("description", ""),
-            command=list(raw["command"]),
+            command=list(raw["command"]) if "command" in raw else None,
+            url=raw.get("url"),
             enabled=bool(raw.get("enabled", True)),
         )
 
@@ -102,7 +112,7 @@ class Host:
         self._workspace = workspace
         self._logbook = logbook
 
-        self.clients: dict[str, MCPClient] = {}
+        self.clients: dict[str, MCPClient | HttpMCPClient] = {}
         self.failures: dict[str, str] = {}
         # namespaced name -> (server name, bare tool name)
         self._routes: dict[str, tuple[str, str]] = {}
@@ -112,13 +122,19 @@ class Host:
     def start(self) -> None:
         """Connect to every server. One failure does not stop the others."""
         for config in self._configs:
-            command = resolve_command(config.command, self._workspace)
-            client = MCPClient(
-                config.name,
-                command,
-                cwd=str(self._workspace),
-                logbook=self._logbook,
-            )
+            client: MCPClient | HttpMCPClient
+            if config.is_remote:
+                # The only place in the host that knows a transport exists.
+                client = HttpMCPClient(
+                    config.name, config.url or "", logbook=self._logbook
+                )
+            else:
+                client = MCPClient(
+                    config.name,
+                    resolve_command(config.command or [], self._workspace),
+                    cwd=str(self._workspace),
+                    logbook=self._logbook,
+                )
             try:
                 client.start()
             except (MCPClientError, jsonrpc.JsonRpcError, jsonrpc.RemoteError) as exc:
@@ -254,7 +270,7 @@ class Host:
         return render_tool_result(result), bool(result.get("isError"))
 
     def _read_resource_as_tool(
-        self, client: MCPClient, arguments: dict[str, Any]
+        self, client: MCPClient | HttpMCPClient, arguments: dict[str, Any]
     ) -> tuple[str, bool]:
         """Back the synthetic read tool with a real resources/read call."""
         uri = arguments.get("uri")
