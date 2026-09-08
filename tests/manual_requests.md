@@ -13,7 +13,8 @@ python data/seed.py
 ## Running a whole session at once
 
 `demo_session.jsonl` holds a complete session: the lifecycle handshake, one
-call to each tool, and every error path.
+call to each tool, both resource methods, both prompt methods, and every
+error path.
 
 ```powershell
 Get-Content tests\demo_session.jsonl | python -m src
@@ -24,7 +25,7 @@ Get-Content tests\demo_session.jsonl | python -m src
 python -m src < tests/demo_session.jsonl
 ```
 
-The file contains **13 messages but you should count 11 responses**. The two
+The file contains **19 messages but you should count 17 responses**. The two
 that go unanswered are notifications, which by definition are never replied to.
 
 Add `--log-level DEBUG` to watch both directions on stderr while protocol
@@ -107,6 +108,54 @@ The only tool that writes:
 {"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"create_support_ticket","arguments":{"email":"ana.morales@example.com","subject":"Package arrived damaged","description":"Order #1001 arrived with the box crushed."}}}
 ```
 
+## Resources
+
+Resources are documents the model reads; it cannot write them and cannot
+choose an arbitrary one. Discovery first:
+
+```json
+{"jsonrpc":"2.0","id":8,"method":"resources/list"}
+```
+
+Reading one returns the markdown as plain text:
+
+```json
+{"jsonrpc":"2.0","id":9,"method":"resources/read","params":{"uri":"vibbo://policies/returns"}}
+```
+
+The four URIs are `vibbo://policies/shipping`, `vibbo://policies/returns`,
+`vibbo://policies/support-faq` and `vibbo://catalog/brewing`.
+
+A URI is never turned into a file path. The server holds a fixed table of
+URI to filename, so a traversal attempt is not a path that gets normalised
+badly; it is simply a key that is not in the table:
+
+```json
+{"jsonrpc":"2.0","id":15,"method":"resources/read","params":{"uri":"vibbo://policies/../../secrets"}}
+```
+
+## Prompts
+
+A prompt is a template the user invokes, not something the model calls on its
+own. The host fills the arguments and gets back the messages to open the
+conversation with.
+
+```json
+{"jsonrpc":"2.0","id":10,"method":"prompts/list"}
+```
+
+```json
+{"jsonrpc":"2.0","id":11,"method":"prompts/get","params":{"name":"support_triage","arguments":{"order_number":"#1009","purchase_channel":"online store","issue_description":"The box arrived crushed and I want a replacement.","evidence":"photo of the box"}}}
+```
+
+The reply is two messages: an `assistant` turn with the triage procedure, and
+a `user` turn holding the case report. The customer's own words are placed
+between `-----BEGIN CUSTOMER TEXT-----` and `-----END CUSTOMER TEXT-----`, and
+the assistant turn states that everything inside the fence is quoted material
+rather than instructions. Try it with an injection attempt as the
+`issue_description` and read the output: the text is passed through
+unmodified, but its status as data is unambiguous.
+
 ## Error paths
 
 Two kinds of failure are answered differently, and the difference is
@@ -121,12 +170,20 @@ to the model; they mean the message itself was wrong.
 
 | Request | Code | Meaning |
 |---|---|---|
-| `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"drop_all_orders","arguments":{}}}` | -32602 | Unknown tool |
-| `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"get_order_status","arguments":{"order_number":"1009"}}}` | -32602 | Required argument missing |
-| `{"jsonrpc":"2.0","id":10,"method":"resources/list"}` | -32601 | Method not implemented yet |
-| `{"jsonrpc":"2.0","id":11,"method":` | -32700 | Malformed JSON |
-| `{"jsonrpc":"1.0","id":12,"method":"ping"}` | -32600 | Wrong protocol version |
-| `{"jsonrpc":"2.0","id":13,"method":"ping","params":[1,2]}` | -32602 | Positional parameters |
+| `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"drop_all_orders","arguments":{}}}` | -32602 | Unknown tool |
+| `{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"get_order_status","arguments":{"order_number":"1009"}}}` | -32602 | Required argument missing |
+| `{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"get_order_status","arguments":{"email":"ana.morales@example.com","order_no":"1009"}}}` | -32602 | Undeclared argument |
+| `{"jsonrpc":"2.0","id":15,"method":"resources/read","params":{"uri":"vibbo://policies/../../secrets"}}` | -32602 | Unknown resource URI |
+| `{"jsonrpc":"2.0","id":16,"method":"admin/shutdown"}` | -32601 | No such method |
+| `{"jsonrpc":"2.0","id":17,"method":` | -32700 | Malformed JSON |
+| `{"jsonrpc":"1.0","id":18,"method":"ping"}` | -32600 | Wrong protocol version |
+| `{"jsonrpc":"2.0","id":19,"method":"ping","params":[1,2]}` | -32602 | Positional parameters |
+
+Note the difference between rows two and three. A missing `email` and a
+misspelled `order_no` are both caught, and neither is allowed to reach the
+database as a lookup that quietly returns nothing. Without the second check
+a client that sends `order_no` would get "no order matches", which points the
+user at the wrong problem.
 
 A malformed message that carries no `id` is a notification, and no error is
 returned for it either:
@@ -144,7 +201,7 @@ This distinction is the one to watch when capturing traffic.
 | Has `id` | yes | no |
 | Expects a response | yes, exactly one | never |
 | On error | error response | silently dropped |
-| Examples | `initialize`, `ping`, `tools/call` | `notifications/initialized` |
+| Examples | `initialize`, `ping`, `tools/call`, `resources/read`, `prompts/get` | `notifications/initialized` |
 
 Every response echoes the `id` of the request that caused it, which is what
 lets a client match replies to calls when several are in flight. The one
