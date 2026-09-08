@@ -1,15 +1,4 @@
-"""MCP lifecycle and method routing.
 
-Turns parsed JSON-RPC messages into MCP behaviour. Does not know about stdio
-(it uses the abstract Transport) and does not know about SQLite (handlers are
-injected with register_feature).
-
-Lifecycle, per MCP revision 2025-11-25::
-
-    UNINITIALIZED --initialize--> INITIALIZING --notifications/initialized--> READY
-
-Only initialize and ping are accepted before the handshake.
-"""
 
 from __future__ import annotations
 
