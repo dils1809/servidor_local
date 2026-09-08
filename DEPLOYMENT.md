@@ -20,6 +20,8 @@ only `src/http_transport.py` is added and `--http` selects it.
 
 ## Render (the deployment actually used)
 
+**Live at https://vibbo-mcp.onrender.com** — endpoint `/mcp`.
+
 Render's free plan needs no card and no prepayment, which is why this project
 uses it. Google Cloud requires a 30 USD prepayment in some countries,
 including Guatemala; the Cloud Run instructions are kept further down as an
@@ -231,34 +233,92 @@ because the seed is baked into the image and is identical in every instance.
 
 ## Capturing the traffic for the Wireshark analysis
 
-Both platforms serve HTTPS only, so a capture shows TLS records rather than
-JSON. To read the JSON-RPC messages, have Python export the TLS session keys
-and give them to Wireshark.
+Both platforms serve HTTPS only, so a raw capture shows TLS records rather
+than JSON. Two things make the traffic readable and the packets identifiable.
+
+### Export the TLS session keys
+
+`chatbot/http_client.py` sets `keylog_filename` on its SSL context from the
+`SSLKEYLOGFILE` variable, so every TLS session writes its secrets to that
+file and Wireshark can decrypt the capture.
 
 ```powershell
 $env:SSLKEYLOGFILE = "$PWD\logs\tls-keys.log"
-python -m chatbot
 ```
 
-`chatbot/http_client.py` sets `keylog_filename` on the SSL context from that
-variable, so every TLS session writes its keys to the file.
-
-In Wireshark: **Edit → Preferences → Protocols → TLS → (Pre)-Master-Secret log
-filename**, point it at `logs/tls-keys.log`, and the capture decodes into
-readable HTTP.
+In Wireshark: **Edit -> Preferences -> Protocols -> TLS -> (Pre)-Master-Secret
+log filename**, point it at that file. The capture then decodes into readable
+HTTP.
 
 The keys file is in `.gitignore` along with the rest of `logs/`. Anyone
 holding it can decrypt that capture, so it does not belong in the repository.
 
-Useful capture filters:
+### Generate traffic worth capturing
+
+Capturing the chatbot directly is awkward: the model decides how many calls to
+make and when, so no two captures look alike and nothing lines up. Use the
+capture script instead. It sends a fixed sequence, one message at a time with
+a pause between each, and writes a manifest naming every message.
+
+```powershell
+python tests/capture_session.py
+```
+
+It wakes the server first, so a 50-second cold start does not end up in the
+capture, then prints the capture filter with the resolved addresses and waits
+for you to start Wireshark. Press Enter and it sends:
+
+| # | Kind | Method | Response |
+| --- | --- | --- | --- |
+| 1 | request | `initialize` | 200, result |
+| 2 | **notification** | `notifications/initialized` | **202, empty body** |
+| 3 | request | `ping` | 200, result |
+| 4 | request | `tools/list` | 200, result |
+| 5 | request | `tools/call` | 200, result |
+| 6 | request | `resources/list` | 200, result |
+| 7 | request | `resources/read` | 200, result |
+| 8 | request | `prompts/list` | 200, result |
+| 9 | request | `tools/call` | 200, **error -32602** |
+| 10 | request | `admin/shutdown` | 200, **error -32601** |
+
+Then a `DELETE /mcp` closes the session. Ten messages in, nine responses out:
+the missing one is the notification.
+
+Afterwards, `logs/capture-manifest.md` holds the addresses, the filters, the
+timestamp of every message and how to classify what you see.
+
+### Filters
+
+Capture filter. The addresses come from the script's output; Render resolves
+to more than one, so capture on whichever the run actually used.
 
 ```
-tcp.port == 443                  # everything to the service
-http2                            # if the platform negotiates HTTP/2
-json-rpc                         # once decryption is working
+host 216.24.57.15 and tcp port 443
 ```
 
----
+Display filters, once decryption works:
+
+```
+http                              all decrypted HTTP
+http.request.method == "POST"     every MCP message sent
+http.response.code == 202         notifications only
+http.response.code == 200         requests that got an answer
+http contains "jsonrpc"           the JSON-RPC payloads
+tcp.flags.syn == 1                connection setup
+tls.handshake.type == 1           TLS Client Hello
+```
+
+### One thing to expect
+
+`urllib` does not keep connections alive, so **each MCP message opens its own
+TCP connection and its own TLS session**. A ten-message run produces about
+twelve TLS handshakes. A production client would reuse one connection, and
+this is a real inefficiency in this client.
+
+For the analysis it is convenient: every message carries its own complete
+layer stack, from the Ethernet frame through the TCP three-way handshake and
+the TLS negotiation to the HTTP request and the JSON-RPC payload inside it. A
+single message can be walked through all four layers in isolation.
 
 ## Cost
 

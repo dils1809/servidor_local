@@ -93,6 +93,7 @@ What is implemented, and where to look for it.
 | Anthropic's official Filesystem and Git servers | `chatbot/servers.json` |
 | A custom MCP server for a real business case | `src/` |
 | The same server over stdio and over HTTP | `src/transport.py`, `src/http_transport.py` |
+| The same server deployed remotely | [vibbo-mcp.onrender.com](https://vibbo-mcp.onrender.com), see [DEPLOYMENT.md](DEPLOYMENT.md) |
 | Colour-coded terminal UI with slash commands | `chatbot/ui.py` |
 
 ---
@@ -349,7 +350,7 @@ the host uses.
     { "name": "filesystem",
       "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "{workspace}"],
       "enabled": true },
-    { "name": "vibbo-remote", "url": "https://your-service.run.app", "enabled": true }
+    { "name": "vibbo-remote", "url": "https://vibbo-mcp.onrender.com", "enabled": true }
   ]
 }
 ```
@@ -525,6 +526,19 @@ curl -i -X POST http://localhost:8080/mcp   -H "Content-Type: application/json" 
 # then use it
 curl -X POST http://localhost:8080/mcp   -H "Content-Type: application/json"   -H "Mcp-Session-Id: THE-ID"   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 ```
+
+This server is deployed and reachable at
+**https://vibbo-mcp.onrender.com** (endpoint `/mcp`). The chatbot connects to
+it and to the local copy at the same time, so the same three tools appear
+twice in `/tools` — once per transport — and both return identical data:
+
+```
+stdio  vibbo          In transit  USPS  9400366674684573766792
+HTTP   vibbo-remote   In transit  USPS  9400366674684573766792
+```
+
+The database is baked into the image by the same deterministic seed, which is
+why the tracking numbers match exactly.
 
 **[DEPLOYMENT.md](DEPLOYMENT.md)** covers deploying this remotely — Render
 (no payment method required) and Google Cloud Run — pointing the chatbot at

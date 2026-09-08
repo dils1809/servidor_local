@@ -32,6 +32,12 @@
         "{workspace}"
       ],
       "enabled": true
+    },
+    {
+      "name": "vibbo-remote",
+      "description": "The same VIBBO server, running remotely over HTTP on Render. Identical tools; only the transport differs.",
+      "url": "https://vibbo-mcp.onrender.com",
+      "enabled": true
     }
   ]
 }
