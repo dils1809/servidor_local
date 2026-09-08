@@ -1,0 +1,26 @@
+# Render blueprint for the remote MCP server.
+#
+# Render reads this file and creates the service, so the deployment is part of
+# the repository instead of a sequence of clicks nobody can reproduce.
+#
+# The service runs the same code as the local server. Only the transport
+# differs: --http instead of stdio, which is what the Dockerfile's CMD selects.
+
+services:
+  - type: web
+    name: vibbo-mcp
+    runtime: docker
+    # The free plan is enough. It sleeps after 15 minutes with no requests and
+    # takes roughly 30 to 50 seconds to wake up, so warm it with one request
+    # before a live demo.
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+
+    # Render injects PORT and expects the process to bind it on 0.0.0.0.
+    # src/http_transport.py reads PORT, so nothing is hard-coded.
+    healthCheckPath: /
+
+    # Deploy on every push to main.
+    branch: main
+    autoDeploy: true

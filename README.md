@@ -526,9 +526,11 @@ curl -i -X POST http://localhost:8080/mcp   -H "Content-Type: application/json" 
 curl -X POST http://localhost:8080/mcp   -H "Content-Type: application/json"   -H "Mcp-Session-Id: THE-ID"   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 ```
 
-**[DEPLOYMENT.md](DEPLOYMENT.md)** covers deploying this to Google Cloud Run,
-pointing the chatbot at the deployed URL, and capturing the encrypted traffic
-for protocol analysis.
+**[DEPLOYMENT.md](DEPLOYMENT.md)** covers deploying this remotely — Render
+(no payment method required) and Google Cloud Run — pointing the chatbot at
+the deployed URL, and capturing the encrypted traffic for protocol analysis.
+`render.yaml` and `Dockerfile` make the deployment reproducible from the
+repository.
 
 ---
 

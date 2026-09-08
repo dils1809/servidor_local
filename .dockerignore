@@ -1,0 +1,12 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+logs/
+chatbot/
+tests/
+*.db
+*.sqlite3
+.env
+*.log
+README.md
