@@ -980,6 +980,12 @@ notifications.
 | The same server, remotely | `src/http_transport.py`, [DEPLOYMENT.md](DEPLOYMENT.md) |
 | Protocol specification | [Protocol details](#protocol-details) |
 | Traffic capture setup | [DEPLOYMENT.md](DEPLOYMENT.md) |
+| Protocol analysis and conclusions | [REPORTE.md](REPORTE.md) (Spanish) |
+
+The written report — server specification, the JSON-RPC message
+classification, the layer-by-layer packet analysis, the difficulties and the
+conclusions — is **[REPORTE.md](REPORTE.md)**. It is in Spanish, the language
+of the course; this README is in English as the assignment requires.
 
 ---
 
